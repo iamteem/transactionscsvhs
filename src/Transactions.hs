@@ -123,16 +123,14 @@ netReport = do
   return ()
 
 creditTotal :: IO Float
-creditTotal = parseTransactions >>= getTotal (<0)
+creditTotal = parseTransactions >>= getTotal (Just (<0)) >>= \amt -> return $ abs amt
 
 debitTotal :: IO Float
-debitTotal = parseTransactions >>= getTotal (>0)
+debitTotal = parseTransactions >>= getTotal (Just (>0)) >>= \amt -> return $ abs amt
 
-getTotal :: (Float -> Bool) -> TransactionsVector -> IO Float
-getTotal fun txns = return $ abs $ sum $ V.filter fun $ V.map amount txns
-
-noFilterTotal :: TransactionsVector -> IO Float
-noFilterTotal txns = return $ sum $ V.map amount txns
+getTotal :: Maybe (Float -> Bool) -> TransactionsVector -> IO Float
+getTotal Nothing txns = return $ sum $ V.map amount txns
+getTotal (Just fun) txns = return $ sum $ V.filter fun $ V.map amount txns
 
 net :: IO Float
-net = parseTransactions >>= noFilterTotal
+net = parseTransactions >>= getTotal Nothing
