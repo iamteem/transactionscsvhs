@@ -16,6 +16,8 @@ import Data.Maybe (fromJust)
 import qualified Data.Text as T
 import GHC.Generics
 import Text.Printf (printf)
+import qualified Control.Monad as M
+import Control.Monad.IO.Class
 
 csvPath :: FilePath
 csvPath = "data/transactions.csv"
@@ -30,6 +32,9 @@ data Transaction = Transaction { name :: !T.Text
                                , memo :: !T.Text
                                , vendor :: !T.Text
                                } deriving Generic
+
+
+type TransactionsVector = V.Vector Transaction
 
 instance FromRecord Transaction
 instance ToRecord Transaction
@@ -54,16 +59,19 @@ instance Eq Transaction where
   (==) t1 t2 = (date t1 == date t2) && (name t1 == name t2)
 
 run :: IO ()
-run = do
+run = parseTransactions >>= sortTransactions >>= displayTransactions -- sortTransactions transactions >>= displayTransactions
+
+parseTransactions :: IO TransactionsVector
+parseTransactions = do
   contents <- B.readFile csvPath
-  case (decode HasHeader contents :: Either String (V.Vector Transaction)) of
-    Left err -> putStrLn $ "Invalid CSV: " ++ err
-    Right transactions -> sortTransactions transactions >>= displayTransactions
+  case (decode HasHeader contents :: Either String TransactionsVector) of
+    Left err -> (putStrLn "Invalid CSV: ") >> return V.empty
+    Right transactions -> return transactions
 
 formatAmount :: Float -> String
 formatAmount amt = if amt >= 0
-  then "\t " L.++ formattedAmount
-  else "\t-" L.++ formattedAmount
+  then formattedAmount
+  else "-" ++ formattedAmount
   where formattedAmount = mconcat [commaSeparated, decimalAmt]
         commaSeparated = "$" ++ commafy num
         num = abs amt
@@ -76,19 +84,55 @@ commafy f = let s = reverse $ show i
                 chunks = S.chunksOf 3 s
             in reverse $ L.concat $ L.intersperse "," chunks
 
-displayTransactions :: V.Vector Transaction -> IO ()
+displayTransactions :: TransactionsVector -> IO ()
 displayTransactions transactions = V.mapM_ displayTransaction transactions
 
 displayTransaction :: Transaction -> IO ()
 displayTransaction = putStrLn . show
 
-sortTransactions :: V.Vector Transaction -> IO (V.Vector Transaction)
+sortTransactions :: TransactionsVector -> IO TransactionsVector
 sortTransactions txns = V.thaw txns >>= \mtxns -> (A.sortBy compare mtxns) >> V.freeze mtxns >>= return
 
--- sortTransactions' :: V.Vector Transaction -> IO (V.Vector Transaction)
--- sortTransactions' txns = let fun t1 t2 = comparing date t1 t2
---                         in do
---                             kamote <- V.thaw txns
---                             A.sortBy fun kamote
---                             j <- V.freeze kamote
---                             return j
+-- sortTransactions'' :: V.Vector Transaction -> IO (V.Vector Transaction)
+-- sortTransactions'' txns = let fun t1 t2 = comparing date t1 t2
+--                           in do
+--                              kamote <- V.thaw txns
+--                              A.sortBy fun kamote
+--                              j <- V.freeze kamote
+--                              return j
+
+summary :: IO ()
+summary = creditReport >> debitReport >> netReport
+
+creditReport :: IO ()
+creditReport = do
+  total <- creditTotal
+  putStrLn $ "Credit: " ++ formatAmount total
+  return ()
+
+debitReport :: IO ()
+debitReport = do
+  total <- debitTotal
+  putStrLn $ "Debit: " ++ formatAmount total
+  return ()
+
+netReport :: IO ()
+netReport = do
+  total <- net
+  putStrLn $ "Net: " ++ formatAmount total
+  return ()
+
+creditTotal :: IO Float
+creditTotal = parseTransactions >>= getTotal (<0)
+
+debitTotal :: IO Float
+debitTotal = parseTransactions >>= getTotal (>0)
+
+getTotal :: (Float -> Bool) -> TransactionsVector -> IO Float
+getTotal fun txns = return $ abs $ sum $ V.filter fun $ V.map amount txns
+
+noFilterTotal :: TransactionsVector -> IO Float
+noFilterTotal txns = return $ sum $ V.map amount txns
+
+net :: IO Float
+net = parseTransactions >>= noFilterTotal
